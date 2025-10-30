@@ -1,0 +1,29 @@
+# Python 编译生成的文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+
+# IDE 配置文件（PyCharm, VSCode 等）
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统生成的隐藏文件
+.DS_Store
+Thumbs.db
+
+# 日志和结果文件（可选）
+logs/
+results/
+output/
+.cache/
+
+# 虚拟环境（如果你用了 venv）
+venv/
+env/
