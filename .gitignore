@@ -8,6 +8,13 @@ __pycache__/
 dist/
 build/
 
+# 结果和输出文件（不要提交）
+.result/
+results/
+output/
+logs/
+.cache/
+
 # IDE 配置文件（PyCharm, VSCode 等）
 .idea/
 .vscode/
