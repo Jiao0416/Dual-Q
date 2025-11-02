@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     # ========== 训练参数设置 ==========
     batch_size = 2000
-    episodes = 100
+    episodes = 50
     replace_target_iter = 1
     total_episode = batch_size * replace_target_iter * episodes
     epsilon_update_period = batch_size * replace_target_iter * 10
