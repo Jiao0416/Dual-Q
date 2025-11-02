@@ -10,6 +10,7 @@ build/
 
 # 结果和输出文件（不要提交）
 .result/
+result/
 results/
 output/
 logs/
@@ -34,3 +35,5 @@ output/
 # 虚拟环境（如果你用了 venv）
 venv/
 env/
+./result/overlay/channel_8_su_6_punish_-2_-10_Q/./result/overlay/channel_8_su_6_punish_-2_-10_Q/success_history.xlsx
+./result/overlay/channel_8_su_6_punish_-2_-10_Q/./result/overlay/channel_8_su_6_punish_-2_-10_Q/success_history.xlsx
