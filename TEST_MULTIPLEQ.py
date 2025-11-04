@@ -30,8 +30,8 @@ if __name__ == "__main__":
 
 
     # ========== 训练参数设置 ==========
-    batch_size = 2000
-    episodes = 50
+    batch_size = 100
+    episodes = 5
     replace_target_iter = 1
     total_episode = batch_size * replace_target_iter * episodes
     epsilon_update_period = batch_size * replace_target_iter * 10
@@ -100,7 +100,7 @@ if __name__ == "__main__":
         action = np.zeros(num_su).astype(np.int32)  # 数组类型转换为32位整数 (1 * num_su)
 
 
-        # ========== 主训练循环 ==========
+        # ========== Q实验主训练循环 ==========
         for step in range(total_episode):
             # print('channel_state', env.channel_state)
             # channel_data.append(observation[0, :])  信道记录
@@ -199,47 +199,82 @@ if __name__ == "__main__":
         # print('length', len(channel_data))
         
 
+        # # ========== 结果保存 ==========
+        # file_folder = '.\\result\\overlay\\channel_%d_su_%d_punish_-2_-10_Q' % (num_channel, num_su)
+        # # 定义文件夹路径
+        # # 使用 os.makedirs 创建文件夹
+        # os.makedirs(file_folder, exist_ok=True)
+        
+        # # 保存各项指标
+        # np.save(file_folder + '\\success_history', success_history)
+        # np.save(file_folder + '\\fail_PU_history', fail_PU_history)
+        # np.save(file_folder + '\\fail_collision_history', fail_collision_history)
+        # np.save(file_folder + '\\overall_reward', overall_reward)
+        # np.save(file_folder + '\\QoS_history', QoS_history)
+        # # np.save(file_folder + '\\channel_data_1', channel_data)
+        # """    
+        # data = np.load(file_folder + '\\channel_data.npy')
+        # print('channel_data222', data)
+        # print('length222', len(data))
+        # """
+        # data1 = np.load(file_folder + '\\success_history.npy')
+        # data2 = np.load(file_folder + '\\fail_PU_history.npy')
+        # data3 = np.load(file_folder + '\\fail_collision_history.npy')
+        # data4 = np.load(file_folder + '\\overall_reward.npy')
+        # data5 = np.load(file_folder + '\\QoS_history.npy')
+        # print('success_history', data1)
+        # print('fail_PU_history', data2)
+        # print('fail_collision_history', data3)
+        # print('overall_reward', data4)
+        # print('QoS_history', data5)
+        
+        # # 同时保存为Excel文件便于分析
+        # df = pd.DataFrame(data5)
+        # df.to_excel(file_folder + '\\QoS_history.xlsx', index=False)
+
+        # df = pd.DataFrame(data2)
+        # df.to_excel(file_folder + '\\fail_PU_history.xlsx', index=False)
+
+        # df = pd.DataFrame(data3)
+        # df.to_excel(file_folder + '\\fail_collision_history.xlsx', index=False)
+
+        # df = pd.DataFrame(data1)
+        # df.to_excel(file_folder + '\\success_history.xlsx', index=False)
+
+    
         # ========== 结果保存 ==========
-        file_folder = '.\\result\\overlay\\channel_%d_su_%d_punish_-2_-10_Q' % (num_channel, num_su)
-        # 定义文件夹路径
-        # 使用 os.makedirs 创建文件夹
+
+        # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
+        file_folder = os.path.join('result', 'overlay', f'channel_{num_channel}_su_{num_su}_punish_-2_-10_Q')
+
+        # 创建目录
         os.makedirs(file_folder, exist_ok=True)
-        
-        # 保存各项指标
-        np.save(file_folder + '\\success_history', success_history)
-        np.save(file_folder + '\\fail_PU_history', fail_PU_history)
-        np.save(file_folder + '\\fail_collision_history', fail_collision_history)
-        np.save(file_folder + '\\overall_reward', overall_reward)
-        np.save(file_folder + '\\QoS_history', QoS_history)
-        # np.save(file_folder + '\\channel_data_1', channel_data)
-        """    
-        data = np.load(file_folder + '\\channel_data.npy')
-        print('channel_data222', data)
-        print('length222', len(data))
-        """
-        data1 = np.load(file_folder + '\\success_history.npy')
-        data2 = np.load(file_folder + '\\fail_PU_history.npy')
-        data3 = np.load(file_folder + '\\fail_collision_history.npy')
-        data4 = np.load(file_folder + '\\overall_reward.npy')
-        data5 = np.load(file_folder + '\\QoS_history.npy')
-        print('success_history', data1)
-        print('fail_PU_history', data2)
-        print('fail_collision_history', data3)
-        print('overall_reward', data4)
-        print('QoS_history', data5)
-        
-        # 同时保存为Excel文件便于分析
-        df = pd.DataFrame(data5)
-        df.to_excel(file_folder + '\\QoS_history.xlsx', index=False)
 
-        df = pd.DataFrame(data2)
-        df.to_excel(file_folder + '\\fail_PU_history.xlsx', index=False)
+        # 保存文件时也用 os.path.join
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
 
-        df = pd.DataFrame(data3)
-        df.to_excel(file_folder + '\\fail_collision_history.xlsx', index=False)
+        # 保存为 Excel
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
 
-        df = pd.DataFrame(data1)
-        df.to_excel(file_folder + '\\success_history.xlsx', index=False)
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
+
     
 
 
@@ -392,36 +427,69 @@ if __name__ == "__main__":
         print('length', len(channel_data))
         """
 
-        # 保存结果
-        file_folder = '.\\result\\overlay\\channel_%d_su_%d_punish_-2_-10_MULTIQ' % (num_channel, num_su)
-        # 定义文件夹路径
-        # 使用 os.makedirs 创建文件夹
+        # # 保存结果
+        # file_folder = '.\\result\\overlay\\channel_%d_su_%d_punish_-2_-10_MULTIQ' % (num_channel, num_su)
+        # # 定义文件夹路径
+        # # 使用 os.makedirs 创建文件夹
+        # os.makedirs(file_folder, exist_ok=True)
+
+        # np.save(file_folder + '\\success_history', success_history)
+        # np.save(file_folder + '\\fail_PU_history', fail_PU_history)
+        # np.save(file_folder + '\\fail_collision_history', fail_collision_history)
+        # np.save(file_folder + '\\overall_reward', overall_reward)
+        # np.save(file_folder + '\\QoS_history', QoS_history)
+        # # np.save(file_folder + '\\channel_data_2', channel_data)
+
+        # # data = np.load(file_folder + '\\channel_data.npy')
+        # # print('channel_data222', data)
+        # # print('length222', len(data))
+
+        # data1 = np.load(file_folder + '\\success_history.npy')
+        # data2 = np.load(file_folder + '\\fail_PU_history.npy')
+        # data3 = np.load(file_folder + '\\fail_collision_history.npy')
+        # data4 = np.load(file_folder + '\\overall_reward.npy')
+        # data5 = np.load(file_folder + '\\QoS_history.npy')
+        # print('success_history', data1)
+        # print('fail_PU_history', data2)
+        # print('fail_collision_history', data3)
+        # print('overall_reward', data4)
+        # print('QoS_history', data5)
+
+        # df = pd.DataFrame(data5)
+        # df.to_excel(file_folder + '\\QoS_history.xlsx', index=False)
+
+        # ========== 结果保存 ==========
+
+        # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
+        file_folder = os.path.join('result', 'overlay', f'channel_{num_channel}_su_{num_su}_punish_-2_-10_MULTIQ')
+
+        # 创建目录
         os.makedirs(file_folder, exist_ok=True)
 
-        np.save(file_folder + '\\success_history', success_history)
-        np.save(file_folder + '\\fail_PU_history', fail_PU_history)
-        np.save(file_folder + '\\fail_collision_history', fail_collision_history)
-        np.save(file_folder + '\\overall_reward', overall_reward)
-        np.save(file_folder + '\\QoS_history', QoS_history)
-        # np.save(file_folder + '\\channel_data_2', channel_data)
+        # 保存文件时也用 os.path.join
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
 
-        # data = np.load(file_folder + '\\channel_data.npy')
-        # print('channel_data222', data)
-        # print('length222', len(data))
+        # 保存为 Excel
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
 
-        data1 = np.load(file_folder + '\\success_history.npy')
-        data2 = np.load(file_folder + '\\fail_PU_history.npy')
-        data3 = np.load(file_folder + '\\fail_collision_history.npy')
-        data4 = np.load(file_folder + '\\overall_reward.npy')
-        data5 = np.load(file_folder + '\\QoS_history.npy')
-        print('success_history', data1)
-        print('fail_PU_history', data2)
-        print('fail_collision_history', data3)
-        print('overall_reward', data4)
-        print('QoS_history', data5)
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
 
-        df = pd.DataFrame(data5)
-        df.to_excel(file_folder + '\\QoS_history.xlsx', index=False)
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+        
     
 
 
@@ -561,41 +629,72 @@ if __name__ == "__main__":
         # print('channel_data', channel_data)
         # print('length', len(channel_data))
 
-        file_folder = '.\\result\\overlay\\channel_%d_su_%d_punish_-2_-10_R' % (num_channel, num_su)
-        # 定义文件夹路径
-        # 使用 os.makedirs 创建文件夹
+        # file_folder = '.\\result\\overlay\\channel_%d_su_%d_punish_-2_-10_R' % (num_channel, num_su)
+        # # 定义文件夹路径
+        # # 使用 os.makedirs 创建文件夹
+        # os.makedirs(file_folder, exist_ok=True)
+
+        # np.save(file_folder + '\\success_history', success_history)
+        # np.save(file_folder + '\\fail_PU_history', fail_PU_history)
+        # np.save(file_folder + '\\fail_collision_history', fail_collision_history)
+        # np.save(file_folder + '\\overall_reward', overall_reward)
+        # np.save(file_folder + '\\QoS_history', QoS_history)
+        # # np.save(file_folder + '\\channel_data_1', channel_data)
+        # """    
+        # data = np.load(file_folder + '\\channel_data.npy')
+        # print('channel_data222', data)
+        # print('length222', len(data))
+        # """
+        # data1 = np.load(file_folder + '\\success_history.npy')
+        # data2 = np.load(file_folder + '\\fail_PU_history.npy')
+        # data3 = np.load(file_folder + '\\fail_collision_history.npy')
+        # data4 = np.load(file_folder + '\\overall_reward.npy')
+        # data5 = np.load(file_folder + '\\QoS_history.npy')
+        # print('success_history', data1)
+        # print('fail_PU_history', data2)
+        # print('fail_collision_history', data3)
+        # print('overall_reward', data4)
+        # print('QoS_history', data5)
+
+        # df = pd.DataFrame(data5)
+        # df.to_excel(file_folder + '\\QoS_history.xlsx', index=False)
+
+        # df = pd.DataFrame(data2)
+        # df.to_excel(file_folder + '\\fail_PU_history.xlsx', index=False)
+
+        # df = pd.DataFrame(data3)
+        # df.to_excel(file_folder + '\\fail_collision_history.xlsx', index=False)
+
+        # df = pd.DataFrame(data1)
+        # df.to_excel(file_folder + '\\success_history.xlsx', index=False)
+
+        # ========== 结果保存 ==========
+
+        # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
+        file_folder = os.path.join('result', 'overlay', f'channel_{num_channel}_su_{num_su}_punish_-2_-10_R')
+
+        # 创建目录
         os.makedirs(file_folder, exist_ok=True)
 
-        np.save(file_folder + '\\success_history', success_history)
-        np.save(file_folder + '\\fail_PU_history', fail_PU_history)
-        np.save(file_folder + '\\fail_collision_history', fail_collision_history)
-        np.save(file_folder + '\\overall_reward', overall_reward)
-        np.save(file_folder + '\\QoS_history', QoS_history)
-        # np.save(file_folder + '\\channel_data_1', channel_data)
-        """    
-        data = np.load(file_folder + '\\channel_data.npy')
-        print('channel_data222', data)
-        print('length222', len(data))
-        """
-        data1 = np.load(file_folder + '\\success_history.npy')
-        data2 = np.load(file_folder + '\\fail_PU_history.npy')
-        data3 = np.load(file_folder + '\\fail_collision_history.npy')
-        data4 = np.load(file_folder + '\\overall_reward.npy')
-        data5 = np.load(file_folder + '\\QoS_history.npy')
-        print('success_history', data1)
-        print('fail_PU_history', data2)
-        print('fail_collision_history', data3)
-        print('overall_reward', data4)
-        print('QoS_history', data5)
+        # 保存文件时也用 os.path.join
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
 
-        df = pd.DataFrame(data5)
-        df.to_excel(file_folder + '\\QoS_history.xlsx', index=False)
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
 
-        df = pd.DataFrame(data2)
-        df.to_excel(file_folder + '\\fail_PU_history.xlsx', index=False)
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
 
-        df = pd.DataFrame(data3)
-        df.to_excel(file_folder + '\\fail_collision_history.xlsx', index=False)
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
 
-        df = pd.DataFrame(data1)
-        df.to_excel(file_folder + '\\success_history.xlsx', index=False)
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
