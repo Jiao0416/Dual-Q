@@ -258,7 +258,7 @@ class Environment:
         self.QoS = np.sum(self.QoS_su)
         # 最终奖励 = 基础奖励 + QoS收益（仅对成功接入者）
         self.reward = self.reward + self.QoS * self.access_su
-        return self.reward, self.QoS, self.access_act, self.reward_type
+        return self.reward, self.QoS, self.access_act, self.reward_type     
 
 
     

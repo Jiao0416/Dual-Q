@@ -9,6 +9,7 @@ import pandas as pd
 # from tensorflow.python.keras import models
 from keras import layers, models
 
+import tensorflow as tf
 
 # 设置显示的最大列、宽等参数，消掉打印不完全中间的省略号
 pd.set_option('display.max_columns', 1000)
@@ -32,7 +33,9 @@ class QLSTMTable:
         self.num_channel = num_channel  # 可接入信道数量
         self.channel_data = []  # 信道实际接入记录
         self._build_lstm()
-    
+
+        # 改为（针对 M1/M2 Mac）：
+        self.optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=0.001)
 
     
     # LSTM预测
@@ -82,29 +85,59 @@ class QLSTMTable:
 
 
 
-    # 在每次接入时，用最新的信道历史训练 LSTM 模型，并预测下一个时刻的信道状态（这个是否繁琐有待考虑，是否可以接入滑动窗口，训练数据量加大）
-    def channel_prediction(self, step):
-        # 因为 Keras LSTM 要求输入是 3D 张量：(batch_size, time_steps, features) (1, 10, num_channel)
-        # x_train 是一个样本，包含过去 10 步的数据，用于预测第 step-1 时刻的状态
-        x_train = np.expand_dims(self.channel_data[step - 11: step - 1], axis=0) 
-        # 取第 step-1 时刻的信道状态
-        y_train = np.expand_dims(self.channel_data[step - 1: step], axis=0)  
-        # y_train = np.squeeze(y_train, axis=0)  # 将目标数据的形状从 (1, 1, 10) 调整为 (1, 10)
+    # # 在每次接入时，用最新的信道历史训练 LSTM 模型，并预测下一个时刻的信道状态（这个是否繁琐有待考虑，是否可以接入滑动窗口，训练数据量加大）
+    # def channel_prediction(self, step):
+    #     # 因为 Keras LSTM 要求输入是 3D 张量：(batch_size, time_steps, features) (1, 10, num_channel)
+    #     # x_train 是一个样本，包含过去 10 步的数据，用于预测第 step-1 时刻的状态
+    #     x_train = np.expand_dims(self.channel_data[step - 11: step - 1], axis=0) 
+    #     # 取第 step-1 时刻的信道状态
+    #     y_train = np.expand_dims(self.channel_data[step - 1: step], axis=0)  
+    #     # y_train = np.squeeze(y_train, axis=0)  # 将目标数据的形状从 (1, 1, 10) 调整为 (1, 10)
 
-        # 训练模型
-        # epochs=5：对这个样本重复训练 5 次（轻微过拟合，但有助于快速适应）
-        # batch_size=1：每次只用一个样本更新权重 → 在线学习（Online Learning）
-        # verbose=0：不打印训练日志，保持安静（0不显示，1显示进度条，2只显示损失）
-        self.model.fit(x_train, y_train, epochs=5, batch_size=1, verbose=0)
-        # print('channel_state', data[i + 1])
-        # 用前十个时刻信道状态预测
-        input_sequence = np.expand_dims(self.channel_data[step - 10: step], axis=0)  # 增加一个样本维度
-        # 最终 prediction 是一个长度为 num_channel 的数组，表示每个信道被占用的概率（0~1之间）
-        prediction = np.squeeze(self.model.predict(input_sequence, verbose=0), axis=0)
-        # print('prediction', prediction)
+    #     # 训练模型
+    #     # epochs=5：对这个样本重复训练 5 次（轻微过拟合，但有助于快速适应）
+    #     # batch_size=1：每次只用一个样本更新权重 → 在线学习（Online Learning）
+    #     # verbose=0：不打印训练日志，保持安静（0不显示，1显示进度条，2只显示损失）
+    #     self.model.fit(x_train, y_train, epochs=5, batch_size=1, verbose=0)
+    #     # print('channel_state', data[i + 1])
+    #     # 用前十个时刻信道状态预测
+    #     input_sequence = np.expand_dims(self.channel_data[step - 10: step], axis=0)  # 增加一个样本维度
+    #     # 最终 prediction 是一个长度为 num_channel 的数组，表示每个信道被占用的概率（0~1之间）
+    #     prediction = np.squeeze(self.model.predict(input_sequence, verbose=0), axis=0)
+    #     # print('prediction', prediction)
+    #     return prediction
+
+
+
+    def channel_prediction(self, step):
+        # 准备训练数据（用于在线更新）
+        x_train = np.expand_dims(self.channel_data[step - 11: step - 1], axis=0)  # (1,10,C)
+        y_train = np.expand_dims(self.channel_data[step - 1: step], axis=0)       # (1,1,C)
+
+        # === 手动训练：替代 model.fit() ===
+        with tf.GradientTape() as tape:
+            y_pred = self.model(x_train, training=True)  # 注意：training=True 启用 dropout/batchnorm
+            loss = tf.keras.losses.mean_squared_error(y_train, y_pred)
+            loss = tf.reduce_mean(loss)
+
+        # 计算梯度并更新权重
+        gradients = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+        
+        # 可选：重复5次（模拟 epochs=5）
+        for _ in range(4):  # 已经做了一次，再做4次
+            with tf.GradientTape() as tape:
+                y_pred = self.model(x_train, training=True)
+                loss = tf.reduce_mean(tf.keras.losses.mean_squared_error(y_train, y_pred))
+            gradients = tape.gradient(loss, self.model.trainable_variables)
+            self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+
+        # === 预测下一步 ===
+        input_sequence = np.expand_dims(self.channel_data[step - 10: step], axis=0)
+        prediction = np.squeeze(self.model(input_sequence, training=False), axis=0)
         return prediction
 
-   
+    
 
     # 检查当前状态 state 是否已经在 Q 表中存在，如果不存在，就向 Q 表中添加一个新行，对应这个新状态
     def check_state_exist(self, state):  #
