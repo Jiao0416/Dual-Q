@@ -25,11 +25,13 @@ class QLSTMTable:
         self.lr = learning_rate  # 学习率
         self.gamma = reward_decay  # 奖励折现因子
         self.epsilon = e_greedy  # 贪婪因子
+
         # 双Q表设计
         # 学习成功接入的经验，用户不与PU碰撞，创建表格，列名是动作，数据类型浮点数
         self.q_table_access = pd.DataFrame(columns=self.actions, dtype=np.float64)  
         # 学习碰撞惩罚的经验，用户与PU碰撞，创建表格，列名是动作，数据类型浮点数
         self.q_table_conflict = pd.DataFrame(columns=self.actions, dtype=np.float64)  
+
         self.num_channel = num_channel  # 可接入信道数量
         self.channel_data = []  # 信道实际接入记录
         self._build_lstm()
@@ -110,6 +112,10 @@ class QLSTMTable:
 
 
     def channel_prediction(self, step):
+        
+        if len(self.channel_data) < 11:
+            return np.zeros((1, self.num_channel))
+
         # 准备训练数据（用于在线更新）
         x_train = np.expand_dims(self.channel_data[step - 11: step - 1], axis=0)  # (1,10,C)
         y_train = np.expand_dims(self.channel_data[step - 1: step], axis=0)       # (1,1,C)
@@ -124,13 +130,13 @@ class QLSTMTable:
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         
-        # 可选：重复5次（模拟 epochs=5）
-        for _ in range(4):  # 已经做了一次，再做4次
-            with tf.GradientTape() as tape:
-                y_pred = self.model(x_train, training=True)
-                loss = tf.reduce_mean(tf.keras.losses.mean_squared_error(y_train, y_pred))
-            gradients = tape.gradient(loss, self.model.trainable_variables)
-            self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+        # # 可选：重复5次（模拟 epochs=5）
+        # for _ in range(4):  # 已经做了一次，再做4次
+        #     with tf.GradientTape() as tape:
+        #         y_pred = self.model(x_train, training=True)
+        #         loss = tf.reduce_mean(tf.keras.losses.mean_squared_error(y_train, y_pred))
+        #     gradients = tape.gradient(loss, self.model.trainable_variables)
+        #     self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
         # === 预测下一步 ===
         input_sequence = np.expand_dims(self.channel_data[step - 10: step], axis=0)
@@ -186,12 +192,16 @@ class QLSTMTable:
                     q_values_access * (ones - prediction[0]) +  # 空闲概率加权成功接入的Q值
                     q_values_conflict * prediction[0]  # 碰撞概率加权与碰撞的Q值
             )
+
+            # === 原来不加屏蔽的方法 ===
             # 在多个动作 Q 值相同时，为了避免总是选择同一个动作（如索引最小的），引入随机性
             weighted_q_values = weighted_q_values.reindex(np.random.permutation(weighted_q_values.index)) 
             # 从打乱后的Q值中选择最大Q值动作
             action = weighted_q_values.idxmax()  
+
         else:
             action = np.random.choice(self.actions)
+
         return action
     
     """

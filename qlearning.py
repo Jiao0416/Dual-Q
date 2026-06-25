@@ -43,12 +43,26 @@ class QLearningTable:  # Q值表
         if np.random.uniform() < self.epsilon:  # 均匀分布0-1，以贪婪因子概率选择Q值最高信道
             # choose best action
             state_action = self.q_table.loc[observation, :]  # 获取当前状态和动作的Q值
+    
+
             # 对选定的行重新索引 np.random.permutation对索引进行重新排序，相同Q值时随机选择其中一个
             state_action = state_action.reindex(np.random.permutation(state_action.index))  # 一些动作有相同的值
             action = state_action.idxmax()  # 从打乱后的Q值中选择最大Q值动作
+
         else:
             # choose random action 否则随机选择信道 探索概率
             action = np.random.choice(self.actions)
+
+        # else:
+        #     # === 改进的探索策略：基于预测的加权随机探索 ===
+        #     idle_probs = 1 - prediction[0]
+
+        #     idle_probs = idle_probs + 1e-5
+
+        #     prob_distribution = idle_probs / np.sum(idle_probs)
+
+        #     action = np.random.choice(self.actions, p=prob_distribution)
+
         return action
 
 

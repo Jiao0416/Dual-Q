@@ -12,6 +12,8 @@ import pandas as pd
 from qlearning import QLearningTable # 传统Q学习算法
 from MultipleQ import QLSTMTable     # 论文提出的双Q+LSTM算法
 from DualQ_plus import DualQPlus
+from QLSTM import QLSTM  
+from DQNLSTM import DQNLSTM
 
 # from DQN import MLP1
 
@@ -33,15 +35,15 @@ if __name__ == "__main__":
 
     # ========== 训练参数设置 ==========
     # 每200步记录一次数据
-    batch_size = 1000
+    batch_size = 2000
 
     # 记录100次
-    episodes = 30 
+    episodes = 50 
 
     replace_target_iter = 1
     total_episode = batch_size * replace_target_iter * episodes
     epsilon_update_period = batch_size * replace_target_iter * 10
-    e_greedy = [0.3, 0.85]  # [0.3, 0.9, 1]
+    e_greedy = [0.3, 0.9]  # [0.3, 0.9, 1]
     # e_greedy = [0.85, 0.3]
     learning_rate = 0.1
     # step 是最小单位的动作，batch_size 是你用来观察趋势的时间窗口（多少个step总结一次）
@@ -52,15 +54,172 @@ if __name__ == "__main__":
     # flag_MultipleQLearning = False
     # flag_random = False
 
-    flag_QLearning = True
+    flag_QLSTM = False
 
-    flag_DualQPlus = True
+    flag_QLearning = False
 
-    flag_MultipleQLearning = True
+    flag_DualQPlus = False
 
-    flag_random = True
+    flag_MultipleQLearning = False
+
+    flag_DQNLSTM = True
+
+    flag_random = False
+
+   
+
+    # ========== Q+LSTM+加权定向探索 ==========
+    if flag_QLSTM:
+        env = copy.deepcopy(env_copy)
+
+        QL_list = []   
+        epsilon_index = np.zeros(num_su, dtype=int)  
+
+        # 为每个SU创建独立的Q学习器（每个SU有自己的Q表，每个 SU 都有自己独立的学习策略，可以有不同的行为模式）
+        for k in range(num_su):
+            QL_tmp = QLSTM(
+                actions=list(range(env.n_actions)),  
+                num_channel=num_channel,
+                learning_rate=learning_rate,         
+                reward_decay=0.9,                    
+                e_greedy=e_greedy[0])                
+            QL_list.append(QL_tmp)                   
+        
+        # SU感知环境，获得信道状态观测值
+        observation = env.sense()  
+        state = [[] for i in range(num_su)]  
+        state_ = [[] for i in range(num_su)]  
 
 
+        # ========== 性能记录初始化 ==========
+        reward_sum = np.zeros(num_su)        # 累计奖励
+        overall_reward = []                  # 总体奖励历史
+        success_history = []                 # 成功接入历史
+        fail_PU_history = []                 # PU碰撞历史
+        fail_collision_history = []          # SU碰撞历史
+        QoS_history = []                     # 网络容量历史
+        success_sum = 0                      # 成功接入计数
+        fail_PU_sum = 0                      # PU碰撞计数
+        fail_collision_sum = 0               # SU碰撞计数
+        QoS_sum = 0                          # 网络容量累计
+
+
+        action = np.zeros(num_su).astype(np.int32)  
+
+
+        # ========== 主训练循环 ==========
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[Step {step}] SU0动作: {action[0]}")
+            # 1. 获取状态
+            for k in range(num_su):
+                state[k] = observation[k, :]
+             
+            np.set_printoptions(threshold=np.inf)  
+
+            # 2. 选择动作（LSTM + 加权定向探索）
+            for k in range(num_su):
+                if step > 10: # 前10步积累数据，之后启用LSTM预测
+                    prediction = QL_list[k].channel_prediction(step)
+                    action[k] = QL_list[k].choose_action_lstm(str(state[k]), prediction)
+                else:
+                    # 前10步用传统随机探索
+                    action[k] = QL_list[k].choose_action(str(state[k]))
+            
+
+            # 3. 执行动作
+            reward, QoS, access_act, reward_type = env.access(action)
+
+
+            # 4. 记录性能指标
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+
+            # 5. 环境更新（马尔可夫信道状态变化）
+            env.render()  
+            observation_ = env.sense() 
+
+            # 6. 下一状态 
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            # 7. Q学习更新
+            for k in range(num_su):
+                QL_list[k].learn(str(state[k]), action[k], reward[k], str(state_[k]))
+            
+            
+            # 8. 定期记录
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)  
+                fail_PU_history.append(fail_PU_sum / num_su) 
+                fail_collision_history.append(fail_collision_sum / num_su) 
+                QoS_history.append(QoS_sum / batch_size) 
+
+                # After one batch, 重置计数器
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+        
+
+            # 9. 更新探索率（随时间减少探索，增加利用）
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('epsilon update to %.1f' % (QL_list[k].epsilon))
+            
+            # 10. 打印
+            if (step + 1) % batch_size == 0:
+                print('Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d; overall_reward = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1], fail_collision_history[-1],
+                       overall_reward[-1]))
+
+            observation = observation_
+
+        # channel_data = np.array(channel_data)  信道记录
+        # print('channel_data', channel_data)
+        # print('length', len(channel_data))
+        
+
+        
+        # ========== 结果保存 ==========
+
+        # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_QLSTM')
+
+        # 创建目录
+        os.makedirs(file_folder, exist_ok=True)
+
+        # 保存文件时也用 os.path.join
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        # 保存为 Excel
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+    
 
     # ========== 传统Q学习算法实验 ==========
     if flag_QLearning:
@@ -243,7 +402,7 @@ if __name__ == "__main__":
         # ========== 结果保存 ==========
 
         # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
-        file_folder = os.path.join('resultpro_1000/30', 'overlay', f'channel_{num_channel}_su_{num_su}_punish_-2_-10_Q')
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_Q')
 
         # 创建目录
         os.makedirs(file_folder, exist_ok=True)
@@ -270,6 +429,217 @@ if __name__ == "__main__":
 
         df = pd.DataFrame(QoS_history)
         df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+    
+
+
+
+
+    # ========== 改进提出的dualq——plus算法实验 ==========
+    if flag_DualQPlus:
+        # 使用相同的环境初始状态
+        env = copy.deepcopy(env_copy)
+
+        # 初始化每个SU的双Q+LSTM学习器
+        QL_list = []  # 每个SU的Q值列表综合
+        epsilon_index = np.zeros(num_su, dtype=int)  # 初始化每个SU的贪婪因子
+        for k in range(num_su):
+            QL_tmp = DualQPlus(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel, # 需要信道数量信息来构建LSTM
+                learning_rate=learning_rate, 
+                reward_decay=0.9,
+                e_greedy=e_greedy[0])  # 此处已设置channel_data、model_lstm
+            QL_list.append(QL_tmp)
+
+        # 初始感知，创建包含num_su个空列表的列表
+        observation = env.sense()  # 返回num_su * num_channel 的序列
+        state = [[] for i in range(num_su)]  # 每个SU看到的当前信道状态
+        state_ = [[] for i in range(num_su)]  # 下一时刻信道状态
+
+        # print('sense_return')
+        """
+        # 输出每个su感知到的信道状态
+        for state_list in state:
+            print(state_list)
+        """
+        # 性能记录初始化（同传统Q学习）
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        # 每个SU采取的动作（0,1,...,num_channel）
+        action = np.zeros(num_su).astype(np.int32)  # 数组类型转换为32位整数 (1 * num_su)
+        # batch * episode 次迭代
+
+
+        # ========== 主训练循环（与传统的区别） ==========
+        for step in range(total_episode):
+            # 每10个step打印一次
+            if step % 10 == 0:
+                print(f"[Step {step}] SU0预测动作: {action[0]}")
+            # 1.获取当前状态
+            for k in range(num_su):
+                state[k] = observation[k, :]  # 用户k看到的信道状态
+
+            np.set_printoptions(threshold=np.inf)  # 打印选项设置为完全显示数组内容
+            # print('用户1：Q值', QL_list[0].q_table)
+            # print('用户2：Q值', QL_list[1].q_table)
+            # print('用户3：Q值', QL_list[2].q_table)
+            # print('用户4：Q值', QL_list[3].q_table)
+            # SU choose action based on observation
+            # print('state', state[0])
+
+            # 2.动作选择（关键区别！）
+            for k in range(num_su):
+                if step > 10:  # 前10步用传统方法，积累足够数据后再用LSTM
+                    # print(QL_list[k].channel_data)
+                    # 使用LSTM预测加权双Q值的智能决策
+                    prediction = QL_list[k].channel_prediction(step)
+                    # 调用 LSTM 模型，用过去 10 步的完整信道占用记录来预测未来
+                    # 假设：prediction = [0.95, 0.20, 0.80]，查双 Q 表（经验），动态加权，计算综合 Q 值，weighted_Q = Q_access * (1 - p) + Q_conflict * p，选择动作
+                    action[k] = QL_list[k].choose_action_lstm(
+                        str(state[k]), 
+                        prediction,
+                        num_channel)
+                    # 需要接入 prediction 是因为是动态变化的，每信道独立动态加权，传统的0.5/0.5是静态的，num_channel是因为ones = np.ones(num_channel)，目的是生成一个和 prediction 长度相同的全1向量，用于计算 1 - prediction（即空闲概率），也为了代码更健壮
+                else: # 前10步使用传统Q学习
+                    action[k] = QL_list[k].choose_action(str(state[k]))  # ← 前10步用传统方法
+
+            # print('Q', QL_list[0].q_table)
+            # print('action', action)
+
+            # 3.执行动作并获得环境反馈
+            reward, QoS, access_act, reward_type = env.access(action)  # 执行接入动作，获得奖励列表（1 * num_su）
+            # print('access_act', access_act)
+
+            # 4.记录信道数据（LSTM 训练的关键！）
+            # 因为 LSTM 预测需要高质量的信道占用历史数据，而单靠本地 observation 无法获知“其他 SU 是否成功占用了信道”。通过 access_act 和 action，每个 SU 能重建接近真实的全局占用状态，从而训练出准确的预测模型，最终实现更智能的频谱接入决策
+            for su_index in range(num_su):
+                # su_index：当前正在处理的第几个 SU，第1个 SU → su_index = 0，
+                # 让当前这个 SU 记录自己的信道历史
+                QL_list[su_index].channel_record(
+                    observation[su_index],    # 记录每个 SU 自己感知到的 PU 占用情况
+                    access_act,               # 哪些 SU 成功接入了（收到 ACK）
+                    action,                   # 所有 SU 这一步选择了哪个信道
+                    su_index,                 # 当前 SU 编号
+                    num_su)                   # 总 SU 数
+            # QL_list[1].channel_record(
+            # [1, 0, 0, 0],   # 第2个SU看到：PU 占了信道0
+            # [1, 0, 1],      # 第1个SU 和 第3个SU 成功，第2个SU 失败
+            # [1, 2, 1],      # 第1个SU选1，第2个SU选2，第3个选1
+            # 1,              # 第1个SU
+            # 3               # 总共3个SU
+            # 最终[1, 1, 0, 0]
+            # QL_list[su_index] 不只是一个 Q 表，而是一个完整的智能体对象；channel_record 是它的一个方法，专门用来记录信道占用历史，为后续的 LSTM 预测提供数据支持
+
+
+            # 5.累加性能指标（同传统 Q）
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            # 6.环境更新
+            env.render()  # 马尔可夫信道更新
+            # print('channel_state', env.channel_state)
+            observation_ = env.sense()  # 感知更新后的信道
+
+            # 7.获取下一状态 (s, a, r, s_)
+            for k in range(num_su):
+                # state[k] = observation[k, :]  # 重新赋值，第一次循环之后的所有循环都需要改变此处状态
+                state_[k] = observation_[k, :]
+            # print('---------------------------------------')
+
+            # 8.双 Q 学习更新（关键区别2）（根据奖励类型更新不同的Q表）
+            for k in range(num_su):
+                QL_list[k].learn(str(state[k]), action[k], reward[k], str(state_[k]), reward_type[k])
+            # 正是因为有两个 Q 表（Q_access 和 Q_conflict），才需要传入 reward_type[k] 来指示：当前这个奖励应该用来更新哪一张 Q 表
+
+            # 9.定期记录性能（每 batch_size 步）同传统）
+            if (step + 1) % batch_size == 0:
+                # Record reward, the number of success / interference / collision
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)  # / batch_size
+                fail_PU_history.append(fail_PU_sum / num_su)  # / batch_size
+                fail_collision_history.append(fail_collision_sum / num_su)  # / batch_size
+                QoS_history.append(QoS_sum / batch_size)  # 网络容量
+
+                # After one batch, refresh the record
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            # 10.更新探索率 ε（同传统）
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('epsilon update to %.1f' % (QL_list[k].epsilon))
+            
+            # 11.打印进度 + 状态流转
+            # Print the record after replace DQN_target
+            if (step + 1) % batch_size == 0:
+                print('step', step)
+                # print('Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d' % ((step + 1), success_history[-1]*num_su, fail_PU_history[-1]*num_su, fail_collision_history[-1]*num_su))
+                print('Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  overall_reward = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1], fail_collision_history[-1],
+                       QoS_history[-1]))
+                # print('overall_reward = %.4f' % overall_reward[-1])
+
+            # 状态流转
+            observation = observation_
+        """
+        channel_data = np.array(channel_data)
+        print('channel_data', channel_data)
+        print('length', len(channel_data))
+        """
+
+        # ========== 结果保存 ==========
+
+        # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_DualQPlus')
+
+        # 创建目录
+        os.makedirs(file_folder, exist_ok=True)
+
+        # 保存文件时也用 os.path.join
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        # 保存为 Excel
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+    
+
+
+
 
 
 
@@ -447,7 +817,7 @@ if __name__ == "__main__":
         # ========== 结果保存 ==========
 
         # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
-        file_folder = os.path.join('resultpro_1000/30', 'overlay', f'channel_{num_channel}_su_{num_su}_punish_-2_-10_MULTIQ')
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_MULTIQ')
 
         # 创建目录
         os.makedirs(file_folder, exist_ok=True)
@@ -476,7 +846,174 @@ if __name__ == "__main__":
         df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
 
         
+
+
+
+
     
+    # ========== DQN+LSTM+加权定向探索 ==========
+    if flag_DQNLSTM:
+        env = copy.deepcopy(env_copy)
+
+        QL_list = []   
+        epsilon_index = np.zeros(num_su, dtype=int)  
+
+        # 为每个SU创建独立的Q学习器（每个SU有自己的Q表，每个 SU 都有自己独立的学习策略，可以有不同的行为模式）
+        for k in range(num_su):
+            QL_tmp = DQNLSTM(
+                actions=list(range(env.n_actions)),  
+                num_channel=num_channel,
+                learning_rate=learning_rate,         
+                reward_decay=0.9,                    
+                e_greedy=e_greedy[0])                
+            QL_list.append(QL_tmp)                   
+        
+        # SU感知环境，获得信道状态观测值
+        observation = env.sense()  
+        state = [[] for i in range(num_su)]  
+        state_ = [[] for i in range(num_su)]  
+
+
+        # ========== 性能记录初始化 ==========
+        reward_sum = np.zeros(num_su)        # 累计奖励
+        overall_reward = []                  # 总体奖励历史
+        success_history = []                 # 成功接入历史
+        fail_PU_history = []                 # PU碰撞历史
+        fail_collision_history = []          # SU碰撞历史
+        QoS_history = []                     # 网络容量历史
+        success_sum = 0                      # 成功接入计数
+        fail_PU_sum = 0                      # PU碰撞计数
+        fail_collision_sum = 0               # SU碰撞计数
+        QoS_sum = 0                          # 网络容量累计
+
+
+        action = np.zeros(num_su).astype(np.int32)  
+
+
+        # ========== 主训练循环 ==========
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[Step {step}] SU0动作: {action[0]}")
+            # 1. 获取状态
+            for k in range(num_su):
+                state[k] = observation[k, :] 
+
+            # 2. 选择动作（LSTM + 加权定向探索）
+            for k in range(num_su):
+                if step > 10: 
+                    # 前10步积累数据，之后启用LSTM预测
+                    prediction = QL_list[k].channel_prediction(step)
+                    # 带定向探索的动作选择
+                    action[k] = QL_list[k].choose_action_lstm(state[k], prediction)
+                else:
+                    # 普通DQN选择
+                    action[k] = QL_list[k].choose_action(state[k])
+            
+
+            # 3. 执行动作
+            reward, QoS, access_act, reward_type = env.access(action)
+
+
+            # 4. 记录性能指标
+            for su_index in range(num_su):
+                QL_list[su_index].channel_record(observation[su_index],
+                    access_act,
+                    action,
+                    su_index,
+                    num_su
+                )
+
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+
+            # 5. 环境更新（马尔可夫信道状态变化）
+            env.render()  
+            observation_ = env.sense() 
+
+            # 6. 下一状态 
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            # 7. DQN 学习更新
+            for k in range(num_su):
+                QL_list[k].learn(state[k], action[k], reward[k], state_[k])
+            
+            
+            # 8. 定期记录
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)  
+                fail_PU_history.append(fail_PU_sum / num_su) 
+                fail_collision_history.append(fail_collision_sum / num_su) 
+                QoS_history.append(QoS_sum / batch_size) 
+
+                # After one batch, 重置计数器
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+        
+
+            # 9. 更新探索率（随时间减少探索，增加利用）
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('epsilon update to %.1f' % (QL_list[k].epsilon))
+            
+            # 10. 打印
+            if (step + 1) % batch_size == 0:
+                print('Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d; overall_reward = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1], fail_collision_history[-1],
+                       overall_reward[-1]))
+
+            observation = observation_
+
+        # channel_data = np.array(channel_data)  信道记录
+        # print('channel_data', channel_data)
+        # print('length', len(channel_data))
+        
+
+        
+        # ========== 结果保存 ==========
+
+        # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_DQNLSTM')
+
+        # 创建目录
+        os.makedirs(file_folder, exist_ok=True)
+
+        # 保存文件时也用 os.path.join
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        # 保存为 Excel
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
+
+
 
 
 
@@ -619,7 +1156,7 @@ if __name__ == "__main__":
         # ========== 结果保存 ==========
 
         # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
-        file_folder = os.path.join('resultpro_1000/30', 'overlay', f'channel_{num_channel}_su_{num_su}_punish_-2_-10_R')
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_R')
 
         # 创建目录
         os.makedirs(file_folder, exist_ok=True)
@@ -645,4 +1182,15 @@ if __name__ == "__main__":
 
         df = pd.DataFrame(QoS_history)
         df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
+
+
+
+
+
+
+
+
+
 
