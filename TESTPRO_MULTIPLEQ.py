@@ -14,6 +14,9 @@ from MultipleQ import QLSTMTable     # 论文提出的双Q+LSTM算法
 from DualQ_plus import DualQPlus
 from QLSTM import QLSTM  
 from DQNLSTM import DQNLSTM
+from DualQeSoftmax import DualQESoftmax
+from DualQeRandom import DualQERandom
+from DualQGreedy import DualQGreedy
 
 # from DQN import MLP1
 
@@ -39,6 +42,9 @@ if __name__ == "__main__":
 
     # 记录100次
     episodes = 50 
+    
+    # Softmax 温度参数
+    softmax_temperature = 1.0
 
     replace_target_iter = 1
     total_episode = batch_size * replace_target_iter * episodes
@@ -62,9 +68,16 @@ if __name__ == "__main__":
 
     flag_MultipleQLearning = False
 
-    flag_DQNLSTM = True
+    flag_DQNLSTM = False
 
     flag_random = False
+
+    flag_DualQESoftmax = False
+
+    flag_DualQERandom = False
+
+    flag_DualQGreedy = True
+
 
    
 
@@ -430,7 +443,299 @@ if __name__ == "__main__":
         df = pd.DataFrame(QoS_history)
         df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
 
-    
+
+
+    # ========== DualQ + LSTM + ε-Random 探索算法实验 ==========
+    if flag_DualQERandom:
+        # 使用相同的环境初始状态
+        env = copy.deepcopy(env_copy)
+
+        # 初始化每个SU的双Q+LSTM+Random探索学习器
+        QL_list = []
+        epsilon_index = np.zeros(num_su, dtype=int)
+        for k in range(num_su):
+            QL_tmp = DualQERandom(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel,
+                learning_rate=learning_rate,
+                reward_decay=0.9,
+                e_greedy=e_greedy[0])
+            QL_list.append(QL_tmp)
+
+        # 初始感知
+        observation = env.sense()
+        state = [[] for i in range(num_su)]
+        state_ = [[] for i in range(num_su)]
+
+        # 性能记录初始化
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        # 每个SU采取的动作
+        action = np.zeros(num_su).astype(np.int32)
+
+        # ========== 主训练循环 ==========
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[DualQERandom Step {step}] SU0动作: {action[0]}")
+
+            # 1. 获取当前状态
+            for k in range(num_su):
+                state[k] = observation[k, :]
+
+            np.set_printoptions(threshold=np.inf)
+
+            # 2. 动作选择
+            for k in range(num_su):
+                if step > 10:
+                    prediction = QL_list[k].channel_prediction(step)
+                    action[k] = QL_list[k].choose_action_lstm(
+                        str(state[k]),
+                        prediction,
+                        num_channel)
+                else:
+                    action[k] = QL_list[k].choose_action(str(state[k]))
+
+            # 3. 执行动作并获得环境反馈
+            reward, QoS, access_act, reward_type = env.access(action)
+
+            # 4. 记录信道数据，用于LSTM在线训练
+            for su_index in range(num_su):
+                QL_list[su_index].channel_record(
+                    observation[su_index],
+                    access_act,
+                    action,
+                    su_index,
+                    num_su)
+
+            # 5. 累加性能指标
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            # 6. 环境更新
+            env.render()
+            observation_ = env.sense()
+
+            # 7. 获取下一状态
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            # 8. 双Q学习更新
+            for k in range(num_su):
+                QL_list[k].learn(str(state[k]), action[k], reward[k], str(state_[k]), reward_type[k])
+
+            # 9. 定期记录性能
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)
+                fail_PU_history.append(fail_PU_sum / num_su)
+                fail_collision_history.append(fail_collision_sum / num_su)
+                QoS_history.append(QoS_sum / batch_size)
+
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            # 10. 更新探索率 ε
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('DualQERandom epsilon update to %.1f' % (QL_list[k].epsilon))
+
+            # 11. 打印进度
+            if (step + 1) % batch_size == 0:
+                print('DualQERandom Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  QoS = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1], fail_collision_history[-1],
+                       QoS_history[-1]))
+
+            observation = observation_
+
+        # ========== 结果保存 ==========
+        file_folder = os.path.join(
+            'resultpro_2000/50',
+            'overlay',
+            f'channel_{num_channel}_su_{num_su}_DualQERandom')
+
+        os.makedirs(file_folder, exist_ok=True)
+
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
+
+    # ========== DualQ + LSTM + Greedy 无探索算法实验 ==========
+    if flag_DualQGreedy:
+        # 使用相同的环境初始状态
+        env = copy.deepcopy(env_copy)
+
+        # 初始化每个SU的双Q+LSTM+Greedy学习器
+        QL_list = []
+        for k in range(num_su):
+            QL_tmp = DualQGreedy(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel,
+                learning_rate=learning_rate,
+                reward_decay=0.9,
+                e_greedy=1.0)
+            QL_list.append(QL_tmp)
+
+        # 初始感知
+        observation = env.sense()
+        state = [[] for i in range(num_su)]
+        state_ = [[] for i in range(num_su)]
+
+        # 性能记录初始化
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        # 每个SU采取的动作
+        action = np.zeros(num_su).astype(np.int32)
+
+        # ========== 主训练循环 ==========
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[DualQGreedy Step {step}] SU0动作: {action[0]}")
+
+            # 1. 获取当前状态
+            for k in range(num_su):
+                state[k] = observation[k, :]
+
+            np.set_printoptions(threshold=np.inf)
+
+            # 2. 动作选择
+            for k in range(num_su):
+                if step > 10:
+                    prediction = QL_list[k].channel_prediction(step)
+                    action[k] = QL_list[k].choose_action_lstm(
+                        str(state[k]),
+                        prediction,
+                        num_channel)
+                else:
+                    action[k] = QL_list[k].choose_action(str(state[k]))
+
+            # 3. 执行动作并获得环境反馈
+            reward, QoS, access_act, reward_type = env.access(action)
+
+            # 4. 记录信道数据，用于LSTM在线训练
+            for su_index in range(num_su):
+                QL_list[su_index].channel_record(
+                    observation[su_index],
+                    access_act,
+                    action,
+                    su_index,
+                    num_su)
+
+            # 5. 累加性能指标
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            # 6. 环境更新
+            env.render()
+            observation_ = env.sense()
+
+            # 7. 获取下一状态
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            # 8. 双Q学习更新
+            for k in range(num_su):
+                QL_list[k].learn(str(state[k]), action[k], reward[k], str(state_[k]), reward_type[k])
+
+            # 9. 定期记录性能
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)
+                fail_PU_history.append(fail_PU_sum / num_su)
+                fail_collision_history.append(fail_collision_sum / num_su)
+                QoS_history.append(QoS_sum / batch_size)
+
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            # 10. 打印进度
+            if (step + 1) % batch_size == 0:
+                print('DualQGreedy Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  QoS = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1], fail_collision_history[-1],
+                       QoS_history[-1]))
+
+            observation = observation_
+
+        # ========== 结果保存 ==========
+        file_folder = os.path.join(
+            'resultpro_2000/50',
+            'overlay',
+            f'channel_{num_channel}_su_{num_su}_DualQGreedy')
+
+        os.makedirs(file_folder, exist_ok=True)
+
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
 
 
 
@@ -637,6 +942,160 @@ if __name__ == "__main__":
         df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
 
     
+
+
+
+
+
+
+    # ========== DualQ + LSTM + ε-Softmax 探索算法实验 ==========
+    if flag_DualQESoftmax:
+        # 使用相同的环境初始状态
+        env = copy.deepcopy(env_copy)
+
+        # 初始化每个SU的双Q+LSTM+Softmax探索学习器
+        QL_list = []
+        epsilon_index = np.zeros(num_su, dtype=int)
+        for k in range(num_su):
+            QL_tmp = DualQESoftmax(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel,
+                learning_rate=learning_rate,
+                reward_decay=0.9,
+                e_greedy=e_greedy[0],
+                temperature=softmax_temperature)
+            QL_list.append(QL_tmp)
+
+        # 初始感知
+        observation = env.sense()
+        state = [[] for i in range(num_su)]
+        state_ = [[] for i in range(num_su)]
+
+        # 性能记录初始化
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        # 每个SU采取的动作
+        action = np.zeros(num_su).astype(np.int32)
+
+        # ========== 主训练循环 ==========
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[DualQESoftmax Step {step}] SU0动作: {action[0]}")
+
+            # 1. 获取当前状态
+            for k in range(num_su):
+                state[k] = observation[k, :]
+
+            np.set_printoptions(threshold=np.inf)
+
+            # 2. 动作选择
+            for k in range(num_su):
+                if step > 10:
+                    prediction = QL_list[k].channel_prediction(step)
+                    action[k] = QL_list[k].choose_action_lstm(
+                        str(state[k]),
+                        prediction,
+                        num_channel)
+                else:
+                    action[k] = QL_list[k].choose_action(str(state[k]))
+
+            # 3. 执行动作并获得环境反馈
+            reward, QoS, access_act, reward_type = env.access(action)
+
+            # 4. 记录信道数据，用于LSTM在线训练
+            for su_index in range(num_su):
+                QL_list[su_index].channel_record(
+                    observation[su_index],
+                    access_act,
+                    action,
+                    su_index,
+                    num_su)
+
+            # 5. 累加性能指标
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            # 6. 环境更新
+            env.render()
+            observation_ = env.sense()
+
+            # 7. 获取下一状态
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            # 8. 双Q学习更新
+            for k in range(num_su):
+                QL_list[k].learn(str(state[k]), action[k], reward[k], str(state_[k]), reward_type[k])
+
+            # 9. 定期记录性能
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)
+                fail_PU_history.append(fail_PU_sum / num_su)
+                fail_collision_history.append(fail_collision_sum / num_su)
+                QoS_history.append(QoS_sum / batch_size)
+
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            # 10. 更新探索率 ε
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('DualQESoftmax epsilon update to %.1f' % (QL_list[k].epsilon))
+
+            # 11. 打印进度
+            if (step + 1) % batch_size == 0:
+                print('DualQESoftmax Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  QoS = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1], fail_collision_history[-1],
+                       QoS_history[-1]))
+
+            observation = observation_
+
+        # ========== 结果保存 ==========
+        file_folder = os.path.join(
+            'resultpro_2000/50',
+            'overlay',
+            f'channel_{num_channel}_su_{num_su}_DualQESoftmax_tau_{softmax_temperature}')
+
+        os.makedirs(file_folder, exist_ok=True)
+
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
 
 
 
