@@ -11,23 +11,29 @@ SMOOTH_WINDOW = 2  # 平滑窗口，保持和 success 图一致
 # 格式：{'file': '文件名', 'label': '图例名称', 'color': '颜色'}
 # 你可以根据实际情况修改文件名和颜色
 METHODS = [
-    {'file': 'channel_8_su_6_punish_-2_-10_MULTIQ/fail_collision_history.xlsx', 'label': 'MULTIQ', 'color': 'red'}, 
+    # {'file': 'channel_8_su_6_punish_-2_-10_MULTIQ/fail_collision_history.xlsx', 'label': 'DualQ', 'color': '#d62728'}, 
 
-    {'file': 'channel_8_su_6_all0.7_DualQPlus/fail_collision_history.xlsx', 'label': 'DualQPlus-egreedy0.85', 'color': 'black'}, 
+    # {'file': 'channel_8_su_6_all0.7_DualQPlus/fail_collision_history.xlsx', 'label': 'The proposed method', 'color': '#000000'}, 
 
-    {'file': 'channel_8_su_6_DualQESoftmax_tau_1.0/fail_collision_history.xlsx', 'label': 'DualQ-εSoftmax', 'color': 'purple'},
+    # {'file': 'channel_8_su_6_DualQESoftmax_tau_1.0/fail_collision_history.xlsx', 'label': 'DualQ-Softmax', 'color': '#9467bd'},
 
-    {'file': 'channel_8_su_6_DualQERandom/fail_collision_history.xlsx', 'label': 'DualQ-εRandom', 'color': 'cyan'},
+    # {'file': 'channel_8_su_6_DualQTopKRandom_k3/fail_collision_history.xlsx', 'label': 'DualQ-TopKRandom', 'color': '#17becf'},
 
-    {'file': 'channel_8_su_6_DualQGreedy/fail_collision_history.xlsx', 'label': 'DualQ-Greedy', 'color': 'magenta'},
+    # {'file': 'channel_8_su_6_DualQGreedy/fail_collision_history.xlsx', 'label': 'DualQ-Greedy', 'color': '#e377c2'},
 
-    {'file': 'channel_8_su_6_explore_DualQPlus/fail_collision_history.xlsx', 'label': 'explore', 'color': 'orange'},
+    # {'file': 'channel_8_su_6_punish_-2_-10_R/fail_collision_history.xlsx',   'label': 'Random',  'color': '#7f7f7f'},
 
-    {'file': 'channel_8_su_6_punish_-2_-10_Q/fail_collision_history.xlsx', 'label': 'Qlearning', 'color': 'blue'},   
+    {'file': 'channel_8_su_6_punish_-2_-10_Q/fail_collision_history.xlsx', 'label': 'Qlearning', 'color': '#1f77b4'},   
 
-    {'file': 'channel_8_su_6_QLSTM/fail_collision_history.xlsx', 'label': 'QLSTM', 'color': 'brown'}, 
+    {'file': 'channel_8_su_6_Qlearning_eGreedy/fail_collision_history.xlsx', 'label': 'Qlearninglstm', 'color': '#ff7f0e'},
 
-    {'file': 'channel_8_su_6_punish_-2_-10_R/fail_collision_history.xlsx',   'label': 'Random',  'color': 'gray'}     
+    {'file': 'channel_8_su_6_Qlearning_TopKRandom_k3/fail_collision_history.xlsx', 'label': 'Qlearning-TopKRandom', 'color': '#00a087'},
+
+    {'file': 'channel_8_su_6_Qlearning_Greedy/fail_collision_history.xlsx', 'label': 'Qlearning-Greedy', 'color': '#2ca02c'},
+
+    {'file': 'channel_8_su_6_Qlearning_Proposed/fail_collision_history.xlsx', 'label': 'Qlearning-Proposed', 'color': '#bcbd22'},
+
+    {'file': 'channel_8_su_6_Qlearning_Softmax/fail_collision_history.xlsx', 'label': 'Qlearning-Softmax', 'color': '#8c564b'}
 ]
 
 def moving_average(data, window):

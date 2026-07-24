@@ -1,12 +1,12 @@
 """
 文件名：DualQeRandom.py
-功能：在双Q表 + LSTM 后验融合框架下，使用 ε-random 探索策略。
+功能：在双Q表 + LSTM 后验融合框架下，使用 Top-K Random 探索策略。
 
 核心对比点：
 1. 利用阶段：根据 LSTM 加权融合后的双Q值选择最大动作；
-2. 探索阶段：均匀随机选择信道。
+2. 探索阶段：从 fused Q 值排名前 K 的信道中随机选择。
 
-该文件用于作为 DualQ_plus.py 中 LSTM-directed exploration 的经典 ε-greedy baseline。
+该文件用于作为 DualQ_plus.py 中 LSTM-directed exploration 的探索策略对比方法。
 """
 
 import numpy as np
@@ -27,12 +27,14 @@ class DualQERandom:
             num_channel,
             learning_rate=0.5,
             reward_decay=0.9,
-            e_greedy=0.9
+            e_greedy=0.9,
+            top_k=3
     ):
         self.actions = actions
         self.lr = learning_rate
         self.gamma = reward_decay
         self.epsilon = e_greedy
+        self.top_k = top_k
 
         # === 双Q表设计 ===
         self.q_table_access = pd.DataFrame(columns=self.actions, dtype=np.float64)
@@ -112,9 +114,9 @@ class DualQERandom:
 
     def choose_action_lstm(self, observation, prediction, num_channel):
         """
-        ε-random 信道选择策略：
+        Top-K Random 信道选择策略：
         - np.random.uniform() < epsilon：利用，选择 fused Q 最大动作；
-        - 否则：探索，均匀随机选择动作。
+        - 否则：探索，从 fused Q 排名前 K 的动作中随机选择。
         """
         self.check_state_exist(observation)
         weighted_q_values = self._get_weighted_q_values(observation, prediction, num_channel)
@@ -123,7 +125,10 @@ class DualQERandom:
             weighted_q_values = weighted_q_values.reindex(np.random.permutation(weighted_q_values.index))
             action = weighted_q_values.idxmax()
         else:
-            action = np.random.choice(self.actions)
+            shuffled_q_values = weighted_q_values.reindex(np.random.permutation(weighted_q_values.index))
+            k = min(self.top_k, len(self.actions))
+            top_k_actions = list(shuffled_q_values.nlargest(k).index)
+            action = np.random.choice(top_k_actions)
 
         return action
 
@@ -156,6 +161,9 @@ class DualQERandom:
             weighted_q_values = weighted_q_values.reindex(np.random.permutation(weighted_q_values.index))
             action = weighted_q_values.idxmax()
         else:
-            action = np.random.choice(self.actions)
+            shuffled_q_values = weighted_q_values.reindex(np.random.permutation(weighted_q_values.index))
+            k = min(self.top_k, len(self.actions))
+            top_k_actions = list(shuffled_q_values.nlargest(k).index)
+            action = np.random.choice(top_k_actions)
 
         return action
