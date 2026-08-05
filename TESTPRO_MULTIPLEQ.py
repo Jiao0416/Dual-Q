@@ -24,6 +24,9 @@ from Qlearning_joint import QlearningJoint, joint_exploration_action as qlearnin
 from QlearningSoftmax import QlearningSoftmax
 from QlearningGreedy import QlearningGreedy
 from QlearningProposed import QlearningProposed
+from DQN import DQN
+from DDQN import DDQN
+from DRQN import DRQN
 
 # from DQN import MLP1
 
@@ -57,7 +60,9 @@ if __name__ == "__main__":
     replace_target_iter = 1
     total_episode = batch_size * replace_target_iter * episodes
     epsilon_update_period = batch_size * replace_target_iter * 10
-    e_greedy = [0.3, 0.9]  # [0.3, 0.9, 1]
+    e_greedy = [0.9]  
+    # [0.3, 0.9, 1]
+    # [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     # e_greedy = [0.85, 0.3]
     learning_rate = 0.1
     # step 是最小单位的动作，batch_size 是你用来观察趋势的时间窗口（多少个step总结一次）
@@ -92,7 +97,7 @@ if __name__ == "__main__":
 
     flag_Qlearning_TopKRandom = False
 
-    flag_Qlearning_Joint = True
+    flag_Qlearning_Joint = False
 
     flag_Qlearning_Softmax = False
 
@@ -100,9 +105,368 @@ if __name__ == "__main__":
 
     flag_Qlearning_Proposed = False
 
+    flag_DQN = True
+
+    flag_DDQN = False
+
+    flag_DRQN = False
+
 
 
    
+
+    # ========== DQN 深度强化学习 baseline ==========
+    if flag_DQN:
+        env = copy.deepcopy(env_copy)
+
+        QL_list = []
+        epsilon_index = np.zeros(num_su, dtype=int)
+        for k in range(num_su):
+            QL_tmp = DQN(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel,
+                learning_rate=0.001,
+                reward_decay=0.9,
+                e_greedy=e_greedy[0])
+            QL_list.append(QL_tmp)
+
+        observation = env.sense()
+        state = [[] for i in range(num_su)]
+        state_ = [[] for i in range(num_su)]
+
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        action = np.zeros(num_su).astype(np.int32)
+
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[DQN Step {step}] SU0动作: {action[0]}")
+
+            for k in range(num_su):
+                state[k] = observation[k, :]
+
+            for k in range(num_su):
+                action[k] = QL_list[k].choose_action(state[k])
+
+            reward, QoS, access_act, reward_type = env.access(action)
+
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            env.render()
+            observation_ = env.sense()
+
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            for k in range(num_su):
+                QL_list[k].learn(state[k], action[k], reward[k], state_[k])
+
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)
+                fail_PU_history.append(fail_PU_sum / num_su)
+                fail_collision_history.append(fail_collision_sum / num_su)
+                QoS_history.append(QoS_sum / batch_size)
+
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('DQN epsilon update to %.1f' % (QL_list[k].epsilon))
+
+            if (step + 1) % batch_size == 0:
+                print('DQN Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  QoS = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1],
+                       fail_collision_history[-1], QoS_history[-1]))
+
+            observation = observation_
+
+        file_folder = os.path.join(
+            'resultpro_2000/50',
+            'overlay',
+            f'channel_{num_channel}_su_{num_su}_DQN_e0.9')
+
+        os.makedirs(file_folder, exist_ok=True)
+
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
+
+    # ========== DDQN 深度强化学习 baseline ==========
+    if flag_DDQN:
+        env = copy.deepcopy(env_copy)
+
+        QL_list = []
+        epsilon_index = np.zeros(num_su, dtype=int)
+        for k in range(num_su):
+            QL_tmp = DDQN(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel,
+                learning_rate=0.001,
+                reward_decay=0.9,
+                e_greedy=e_greedy[0])
+            QL_list.append(QL_tmp)
+
+        observation = env.sense()
+        state = [[] for i in range(num_su)]
+        state_ = [[] for i in range(num_su)]
+
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        action = np.zeros(num_su).astype(np.int32)
+
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[DDQN Step {step}] SU0动作: {action[0]}")
+
+            for k in range(num_su):
+                state[k] = observation[k, :]
+
+            for k in range(num_su):
+                action[k] = QL_list[k].choose_action(state[k])
+
+            reward, QoS, access_act, reward_type = env.access(action)
+
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            env.render()
+            observation_ = env.sense()
+
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            for k in range(num_su):
+                QL_list[k].learn(state[k], action[k], reward[k], state_[k])
+
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)
+                fail_PU_history.append(fail_PU_sum / num_su)
+                fail_collision_history.append(fail_collision_sum / num_su)
+                QoS_history.append(QoS_sum / batch_size)
+
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('DDQN epsilon update to %.1f' % (QL_list[k].epsilon))
+
+            if (step + 1) % batch_size == 0:
+                print('DDQN Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  QoS = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1],
+                       fail_collision_history[-1], QoS_history[-1]))
+
+            observation = observation_
+
+        file_folder = os.path.join(
+            'resultpro_2000/50',
+            'overlay',
+            f'channel_{num_channel}_su_{num_su}_DDQN_e0.9')
+
+        os.makedirs(file_folder, exist_ok=True)
+
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+
+
+    # ========== DRQN 深度循环强化学习 baseline ==========
+    if flag_DRQN:
+        env = copy.deepcopy(env_copy)
+
+        QL_list = []
+        epsilon_index = np.zeros(num_su, dtype=int)
+        for k in range(num_su):
+            QL_tmp = DRQN(
+                actions=list(range(env.n_actions)),
+                num_channel=num_channel,
+                learning_rate=0.001,
+                reward_decay=0.9,
+                e_greedy=e_greedy[0])
+            QL_list.append(QL_tmp)
+
+        observation = env.sense()
+        state = [[] for i in range(num_su)]
+        state_ = [[] for i in range(num_su)]
+
+        reward_sum = np.zeros(num_su)
+        overall_reward = []
+        success_history = []
+        fail_PU_history = []
+        fail_collision_history = []
+        QoS_history = []
+        success_sum = 0
+        fail_PU_sum = 0
+        fail_collision_sum = 0
+        QoS_sum = 0
+
+        action = np.zeros(num_su).astype(np.int32)
+
+        for step in range(total_episode):
+            if step % 10 == 0:
+                print(f"[DRQN Step {step}] SU0动作: {action[0]}")
+
+            for k in range(num_su):
+                state[k] = observation[k, :]
+
+            for k in range(num_su):
+                action[k] = QL_list[k].choose_action(state[k])
+
+            reward, QoS, access_act, reward_type = env.access(action)
+
+            for su_index in range(num_su):
+                QL_list[su_index].channel_record(
+                    observation[su_index],
+                    access_act,
+                    action,
+                    su_index,
+                    num_su)
+
+            reward_sum = reward_sum + reward
+            success_sum = success_sum + env.success
+            fail_PU_sum = fail_PU_sum + env.fail_PU
+            fail_collision_sum = fail_collision_sum + env.fail_collision
+            QoS_sum = QoS_sum + QoS
+
+            env.render()
+            observation_ = env.sense()
+
+            for k in range(num_su):
+                state_[k] = observation_[k, :]
+
+            for k in range(num_su):
+                QL_list[k].learn(state[k], action[k], reward[k], state_[k])
+
+            if (step + 1) % batch_size == 0:
+                overall_reward.append(np.sum(reward_sum) / batch_size / num_su)
+                success_history.append(success_sum / num_su)
+                fail_PU_history.append(fail_PU_sum / num_su)
+                fail_collision_history.append(fail_collision_sum / num_su)
+                QoS_history.append(QoS_sum / batch_size)
+
+                reward_sum = np.zeros(num_su)
+                success_sum = 0
+                fail_PU_sum = 0
+                fail_collision_sum = 0
+                QoS_sum = 0
+
+            if ((step + 1) % epsilon_update_period == 0):
+                for k in range(num_su):
+                    epsilon_index[k] = min(len(e_greedy) - 1, epsilon_index[k] + 1)
+                    QL_list[k].epsilon = e_greedy[epsilon_index[k]]
+                print('DRQN epsilon update to %.1f' % (QL_list[k].epsilon))
+
+            if (step + 1) % batch_size == 0:
+                print('DRQN Training time = %d;  success = %d;  fail_PU = %d;  fail_collision = %d;  QoS = %.4f' %
+                      ((step + 1), success_history[-1], fail_PU_history[-1],
+                       fail_collision_history[-1], QoS_history[-1]))
+
+            observation = observation_
+
+        file_folder = os.path.join(
+            'resultpro_2000/50',
+            'overlay',
+            f'channel_{num_channel}_su_{num_su}_DRQN_e0.9')
+
+        os.makedirs(file_folder, exist_ok=True)
+
+        np.save(os.path.join(file_folder, 'success_history'), success_history)
+        np.save(os.path.join(file_folder, 'fail_PU_history'), fail_PU_history)
+        np.save(os.path.join(file_folder, 'fail_collision_history'), fail_collision_history)
+        np.save(os.path.join(file_folder, 'overall_reward'), overall_reward)
+        np.save(os.path.join(file_folder, 'QoS_history'), QoS_history)
+
+        df = pd.DataFrame(success_history)
+        df.to_excel(os.path.join(file_folder, 'success_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_PU_history)
+        df.to_excel(os.path.join(file_folder, 'fail_PU_history.xlsx'), index=False)
+
+        df = pd.DataFrame(fail_collision_history)
+        df.to_excel(os.path.join(file_folder, 'fail_collision_history.xlsx'), index=False)
+
+        df = pd.DataFrame(overall_reward)
+        df.to_excel(os.path.join(file_folder, 'overall_reward.xlsx'), index=False)
+
+        df = pd.DataFrame(QoS_history)
+        df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
+
+        
 
     # ========== Q+LSTM+加权定向探索 ==========
     if flag_QLSTM:
@@ -257,7 +621,7 @@ if __name__ == "__main__":
         df.to_excel(os.path.join(file_folder, 'QoS_history.xlsx'), index=False)
     
 
-    # ========== 传统Q学习算法实验 ==========
+    # ========== 传统Qlearning学习算法实验 ==========
     if flag_QLearning:
         # 为了公平对比，使用相同的环境初始状态
         env = copy.deepcopy(env_copy)
@@ -438,7 +802,8 @@ if __name__ == "__main__":
         # ========== 结果保存 ==========
 
         # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
-        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_Q')
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_Qlearning_e0.9')
+        # f'channel_{num_channel}_su_{num_su}_egreedy0.9_Q')
 
         # 创建目录
         os.makedirs(file_folder, exist_ok=True)
@@ -902,9 +1267,9 @@ if __name__ == "__main__":
 
         # ========== 结果保存 ==========
         file_folder = os.path.join(
-            'resultpro_2000/50',
+            'resultpro_2000/100',
             'overlay',
-            f'channel_{num_channel}_su_{num_su}_QlearningJoint')
+            f'channel_{num_channel}_su_{num_su}_QlearningJoint_e0.85')
 
         os.makedirs(file_folder, exist_ok=True)
 
@@ -2015,7 +2380,7 @@ if __name__ == "__main__":
         file_folder = os.path.join(
             'resultpro_2000/50',
             'overlay',
-            f'channel_{num_channel}_su_{num_su}_DualQJoint')
+            f'channel_{num_channel}_su_{num_su}_DualQJoint_e0.9')
 
         os.makedirs(file_folder, exist_ok=True)
 
@@ -2371,7 +2736,7 @@ if __name__ == "__main__":
         # ========== 结果保存 ==========
 
         # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
-        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_MULTIQ')
+        file_folder = os.path.join('resultpro_2000/100', 'overlay', f'channel_{num_channel}_su_{num_su}_MULTIQ_e0.85')
 
         # 创建目录
         os.makedirs(file_folder, exist_ok=True)
@@ -2710,7 +3075,7 @@ if __name__ == "__main__":
         # ========== 结果保存 ==========
 
         # 使用 os.path.join 自动适配平台（Mac用/, Windows用\）
-        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_egreedy0.9_R')
+        file_folder = os.path.join('resultpro_2000/50', 'overlay', f'channel_{num_channel}_su_{num_su}_Random_e0.9')
 
         # 创建目录
         os.makedirs(file_folder, exist_ok=True)
